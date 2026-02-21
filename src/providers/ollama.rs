@@ -3,6 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::model::Message;
 
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
@@ -31,23 +32,21 @@ fn chat_url(base_url: &str) -> String {
     format!("{}/api/chat", base_url.trim_end_matches('/'))
 }
 
-pub async fn chat_once(client: &Client, cfg: &Config, prompt: &str) -> Result<String> {
-    let mut messages = Vec::new();
-    if !cfg.system_prompt.trim().is_empty() {
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: cfg.system_prompt.clone(),
-        });
-    }
-    messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: prompt.to_string(),
-    });
+fn to_ollama_messages(messages: &[Message]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .map(|msg| ChatMessage {
+            role: msg.role.as_str().to_string(),
+            content: msg.content.clone(),
+        })
+        .collect()
+}
 
+pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result<String> {
     let body = OllamaChatRequest {
         model: cfg.model.clone(),
         stream: false,
-        messages,
+        messages: to_ollama_messages(messages),
     };
 
     let response = client
