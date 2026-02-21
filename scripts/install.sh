@@ -102,7 +102,7 @@ main() {
   local model ollama_base_url model_provider
   model_provider="$(read_env_var .env MODEL_PROVIDER || printf '%s' "ollama")"
   model="$(read_env_var .env MODEL || printf '%s' "$DEFAULT_MODEL")"
-  ollama_base_url="$(read_env_var .env OLLAMA_BASE_URL || printf '%s' "$DEFAULT_OLLAMA_BASE_URL")"
+  ollama_base_url="$(read_env_var .env MODEL_BASE_URL || printf '%s' "$DEFAULT_OLLAMA_BASE_URL")"
 
   if [[ "${model_provider,,}" != "ollama" ]]; then
     log "MODEL_PROVIDER=${model_provider}; using local Ollama model ${DEFAULT_MODEL} for bootstrap."
