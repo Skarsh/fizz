@@ -13,6 +13,8 @@ use config::Config;
 use repl::run_repl;
 
 pub async fn run() -> Result<()> {
+    dotenvy::dotenv().ok();
+
     let cfg = Config::from_env();
     let client = Client::builder()
         .build()
