@@ -37,4 +37,4 @@ Environment variables (all optional):
 
 ## Built-in tool
 
-- `time.now`: returns current unix time in seconds.
+- `time.now`: returns current UTC time and unix time in seconds.

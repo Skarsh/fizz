@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct ToolCall {
@@ -8,7 +9,7 @@ pub struct ToolCall {
 pub fn usage_instructions() -> &'static str {
     "Tools are available.
 Available tools:
-- time.now: returns current unix time in seconds.
+- time.now: returns current UTC time and unix time in seconds.
 If a tool is needed, reply with exactly: TOOL_CALL:time.now
 After receiving tool results, respond normally to the user."
 }
@@ -27,11 +28,13 @@ pub fn parse_tool_call(text: &str) -> Option<ToolCall> {
 pub fn execute(call: &ToolCall) -> Result<String> {
     match call.name.as_str() {
         "time.now" => {
-            let secs = SystemTime::now()
+            let now = SystemTime::now();
+            let secs = now
                 .duration_since(UNIX_EPOCH)
                 .map_err(|err| anyhow!("time.now failed: {err}"))?
                 .as_secs();
-            Ok(secs.to_string())
+            let timestamp = DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
+            Ok(format!("{timestamp} (unix: {secs})"))
         }
         _ => Err(anyhow!("unknown tool '{}'", call.name)),
     }
@@ -53,12 +56,14 @@ mod tests {
     }
 
     #[test]
-    fn execute_time_now_returns_numeric_string() {
+    fn execute_time_now_returns_readable_and_unix() {
         let output = execute(&ToolCall {
             name: "time.now".to_string(),
         })
         .expect("time.now should work");
-        assert!(!output.is_empty());
-        assert!(output.chars().all(|ch| ch.is_ascii_digit()));
+        assert!(output.contains("T"));
+        assert!(output.contains("Z"));
+        assert!(output.contains("(unix: "));
+        assert!(output.ends_with(')'));
     }
 }
