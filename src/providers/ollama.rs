@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::model::Message;
+use crate::providers::http_errors::model_api_request_error;
 
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
@@ -43,6 +44,7 @@ fn to_ollama_messages(messages: &[Message]) -> Vec<ChatMessage> {
 }
 
 pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result<String> {
+    let api_url = chat_url(&cfg.model_base_url);
     let body = OllamaChatRequest {
         model: cfg.model.clone(),
         stream: false,
@@ -50,11 +52,11 @@ pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result
     };
 
     let response = client
-        .post(chat_url(&cfg.model_base_url))
+        .post(&api_url)
         .json(&body)
         .send()
         .await
-        .context("Failed to call model API")?;
+        .map_err(|err| model_api_request_error(err, &api_url, cfg.model_timeout_secs))?;
 
     if !response.status().is_success() {
         let status = response.status();
