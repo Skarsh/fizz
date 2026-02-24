@@ -2,89 +2,193 @@ mod tools;
 
 use anyhow::Result;
 use reqwest::Client;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::config::Config;
-use crate::model::{self, Message, MessageRole};
+use crate::model::{self, Message};
 
 const MAX_HISTORY_MESSAGES: usize = 40;
 const MAX_TOOL_HOPS_PER_TURN: usize = 2;
-const TOOL_RESULT_USER_PREFIX: &str = "Tool '";
 
-pub struct Agent<'a> {
-    client: &'a Client,
-    cfg: &'a Config,
-    history: Vec<Message>,
-    system_messages: Vec<Message>,
+type ModelFuture = Pin<Box<dyn Future<Output = Result<String>>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryMessageKind {
+    System,
+    UserInput,
+    ToolResult,
+    Assistant,
 }
 
-impl<'a> Agent<'a> {
-    pub fn new(client: &'a Client, cfg: &'a Config) -> Self {
-        let system_messages = build_system_messages(cfg);
-        let history = system_messages.clone();
+struct TurnState {
+    history: Vec<Message>,
+    history_kinds: Vec<HistoryMessageKind>,
+    system_len: usize,
+}
+
+impl TurnState {
+    fn new(cfg: &Config) -> Self {
+        Self::from_system_messages(build_system_messages(cfg))
+    }
+
+    fn from_system_messages(system_messages: Vec<Message>) -> Self {
+        let system_len = system_messages.len();
+        let history = system_messages;
+        let history_kinds = vec![HistoryMessageKind::System; system_len];
         Self {
-            client,
-            cfg,
             history,
-            system_messages,
+            history_kinds,
+            system_len,
         }
     }
 
-    pub fn reset(&mut self) {
-        self.history = self.system_messages.clone();
+    fn reset(&mut self) {
+        self.history.truncate(self.system_len);
+        self.history_kinds.truncate(self.system_len);
     }
 
-    pub fn history(&self) -> &[Message] {
+    fn history(&self) -> &[Message] {
         &self.history
     }
 
-    pub async fn run_turn(&mut self, user_input: &str) -> Result<String> {
-        self.history.push(Message::user(user_input));
+    fn push_user_input(&mut self, content: impl Into<String>) {
+        self.push_message(Message::user(content), HistoryMessageKind::UserInput);
+    }
+
+    fn push_tool_result(&mut self, tool_name: &str, tool_result: &str) {
+        self.push_message(
+            Message::user(format_tool_result_user_message(tool_name, tool_result)),
+            HistoryMessageKind::ToolResult,
+        );
+    }
+
+    fn push_assistant(&mut self, content: impl Into<String>) {
+        self.push_message(Message::assistant(content), HistoryMessageKind::Assistant);
+    }
+
+    fn push_message(&mut self, message: Message, kind: HistoryMessageKind) {
+        self.history.push(message);
+        self.history_kinds.push(kind);
         self.trim_history();
+    }
+
+    fn trim_history(&mut self) {
+        trim_history_messages(&mut self.history, &mut self.history_kinds, self.system_len);
+    }
+}
+
+struct TurnEngine {
+    state: TurnState,
+}
+
+impl TurnEngine {
+    fn new(cfg: &Config) -> Self {
+        Self {
+            state: TurnState::new(cfg),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state.reset();
+    }
+
+    fn history(&self) -> &[Message] {
+        self.state.history()
+    }
+
+    async fn run_turn_live(
+        &mut self,
+        user_input: &str,
+        client: &Client,
+        cfg: &Config,
+    ) -> Result<String> {
+        let client = client.clone();
+        let cfg = cfg.clone();
+
+        self.run_turn_with(
+            user_input,
+            move |messages| {
+                let client = client.clone();
+                let cfg = cfg.clone();
+                Box::pin(async move { model::chat(&client, &cfg, &messages).await })
+            },
+            tools::execute,
+        )
+        .await
+    }
+
+    async fn run_turn_with<C, E>(
+        &mut self,
+        user_input: &str,
+        mut chat: C,
+        mut execute_tool: E,
+    ) -> Result<String>
+    where
+        C: FnMut(Vec<Message>) -> ModelFuture,
+        E: FnMut(&tools::ToolCall) -> Result<String>,
+    {
+        self.state.push_user_input(user_input);
 
         let mut tool_hops = 0usize;
-        let mut response = model::chat(self.client, self.cfg, &self.history).await?;
+        let mut response = chat(self.state.history().to_vec()).await?;
 
         loop {
             let Some(tool_call) = tools::parse_tool_call(&response) else {
-                self.history.push(Message::assistant(response.clone()));
-                self.trim_history();
+                self.state.push_assistant(response.clone());
                 return Ok(response);
             };
 
             if tool_hops >= MAX_TOOL_HOPS_PER_TURN {
-                self.history.push(Message::assistant(response));
-                self.trim_history();
-
                 let limit_msg = format!(
                     "I stopped after {} tool calls in one turn. Please try a simpler request.",
                     MAX_TOOL_HOPS_PER_TURN
                 );
-                self.history.push(Message::assistant(limit_msg.clone()));
-                self.trim_history();
+                self.state.push_assistant(limit_msg.clone());
                 return Ok(limit_msg);
             }
 
             tool_hops += 1;
-            self.history.push(Message::assistant(response));
-            self.trim_history();
+            self.state.push_assistant(response);
 
-            let tool_result = match tools::execute(&tool_call) {
+            let tool_result = match execute_tool(&tool_call) {
                 Ok(output) => output,
                 Err(err) => format!("ERROR: {err}"),
             };
-            self.history
-                .push(Message::user(format_tool_result_user_message(
-                    &tool_call.name,
-                    &tool_result,
-                )));
-            self.trim_history();
+            self.state.push_tool_result(&tool_call.name, &tool_result);
 
-            response = model::chat(self.client, self.cfg, &self.history).await?;
+            response = chat(self.state.history().to_vec()).await?;
+        }
+    }
+}
+
+pub struct Agent<'a> {
+    client: &'a Client,
+    cfg: &'a Config,
+    turn_engine: TurnEngine,
+}
+
+impl<'a> Agent<'a> {
+    pub fn new(client: &'a Client, cfg: &'a Config) -> Self {
+        Self {
+            client,
+            cfg,
+            turn_engine: TurnEngine::new(cfg),
         }
     }
 
-    fn trim_history(&mut self) {
-        trim_history_messages(&mut self.history, &self.system_messages);
+    pub fn reset(&mut self) {
+        self.turn_engine.reset();
+    }
+
+    pub fn history(&self) -> &[Message] {
+        self.turn_engine.history()
+    }
+
+    pub async fn run_turn(&mut self, user_input: &str) -> Result<String> {
+        self.turn_engine
+            .run_turn_live(user_input, self.client, self.cfg)
+            .await
     }
 }
 
@@ -92,31 +196,36 @@ fn format_tool_result_user_message(tool_name: &str, tool_result: &str) -> String
     format!("Tool '{}' result: {}", tool_name, tool_result)
 }
 
-fn is_internal_tool_result_user_message(msg: &Message) -> bool {
-    matches!(&msg.role, MessageRole::User)
-        && msg.content.starts_with(TOOL_RESULT_USER_PREFIX)
-        && msg.content.contains("' result:")
+fn is_user_turn_start(kind: HistoryMessageKind) -> bool {
+    matches!(kind, HistoryMessageKind::UserInput)
 }
 
-fn is_user_turn_start(msg: &Message) -> bool {
-    matches!(&msg.role, MessageRole::User) && !is_internal_tool_result_user_message(msg)
-}
+fn trim_history_messages(
+    history: &mut Vec<Message>,
+    history_kinds: &mut Vec<HistoryMessageKind>,
+    system_len: usize,
+) {
+    debug_assert_eq!(history.len(), history_kinds.len());
 
-fn trim_history_messages(history: &mut Vec<Message>, system_messages: &[Message]) {
     if history.len() <= MAX_HISTORY_MESSAGES {
         return;
     }
 
-    let system_len = system_messages.len();
     let keep_tail = MAX_HISTORY_MESSAGES.saturating_sub(system_len);
     let min_start = history.len().saturating_sub(keep_tail).max(system_len);
-    let aligned_start = (min_start..history.len()).find(|&idx| is_user_turn_start(&history[idx]));
+    let aligned_start =
+        (min_start..history.len()).find(|&idx| is_user_turn_start(history_kinds[idx]));
 
-    let mut trimmed = system_messages.to_vec();
+    let mut trimmed_history = history[..system_len].to_vec();
+    let mut trimmed_kinds = history_kinds[..system_len].to_vec();
+
     if let Some(start) = aligned_start {
-        trimmed.extend_from_slice(&history[start..]);
+        trimmed_history.extend_from_slice(&history[start..]);
+        trimmed_kinds.extend_from_slice(&history_kinds[start..]);
     }
-    *history = trimmed;
+
+    *history = trimmed_history;
+    *history_kinds = trimmed_kinds;
 }
 
 fn build_system_messages(cfg: &Config) -> Vec<Message> {
@@ -132,66 +241,236 @@ fn build_system_messages(cfg: &Config) -> Vec<Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_HISTORY_MESSAGES, trim_history_messages};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    use super::{
+        HistoryMessageKind, MAX_HISTORY_MESSAGES, MAX_TOOL_HOPS_PER_TURN, ModelFuture, TurnEngine,
+        TurnState,
+    };
     use crate::model::Message;
+
+    struct StubModel {
+        responses: VecDeque<String>,
+        call_count: usize,
+    }
+
+    impl StubModel {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: responses.into_iter().map(str::to_string).collect(),
+                call_count: 0,
+            }
+        }
+
+        fn chat(&mut self, _messages: Vec<Message>) -> ModelFuture {
+            self.call_count += 1;
+            let response = self
+                .responses
+                .pop_front()
+                .expect("stub model missing queued response");
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
+    fn test_system_messages() -> Vec<Message> {
+        vec![Message::system("sys"), Message::system("tools")]
+    }
+
+    fn test_state() -> TurnState {
+        TurnState::from_system_messages(test_system_messages())
+    }
+
+    fn test_engine() -> TurnEngine {
+        TurnEngine {
+            state: test_state(),
+        }
+    }
 
     #[test]
     fn trim_history_preserves_turn_boundaries() {
-        let system_messages = vec![Message::system("sys"), Message::system("tools")];
-        let mut history = system_messages.clone();
+        let mut state = test_state();
 
         for i in 0..25 {
-            history.push(Message::user(format!("user-{i}")));
-            history.push(Message::assistant(format!("assistant-{i}")));
+            state.push_user_input(format!("user-{i}"));
+            state.push_assistant(format!("assistant-{i}"));
         }
 
-        trim_history_messages(&mut history, &system_messages);
-
-        assert!(history.len() <= MAX_HISTORY_MESSAGES);
-        assert_eq!(history[0].content, "sys");
-        assert_eq!(history[1].content, "tools");
-        assert_eq!(history[2].role.as_str(), "user");
+        assert!(state.history.len() <= MAX_HISTORY_MESSAGES);
+        assert_eq!(state.history[0].content, "sys");
+        assert_eq!(state.history[1].content, "tools");
+        assert_eq!(state.history_kinds[2], HistoryMessageKind::UserInput);
     }
 
     #[test]
     fn trim_history_skips_tool_result_messages_as_turn_starts() {
-        let system_messages = vec![Message::system("sys"), Message::system("tools")];
-        let mut history = system_messages.clone();
+        let mut state = test_state();
 
-        history.push(Message::user("q0"));
-        history.push(Message::assistant(r#"{"tool_call":{"name":"time.now"}}"#));
-        history.push(Message::user("Tool 'time.now' result: one"));
-        history.push(Message::assistant(r#"{"tool_call":{"name":"time.now"}}"#));
-        history.push(Message::user("Tool 'time.now' result: two"));
-        history.push(Message::assistant("done"));
+        state.push_user_input("q0");
+        state.push_assistant(r#"{"tool_call":{"name":"time.now"}}"#);
+        state.push_tool_result("time.now", "one");
+        state.push_assistant(r#"{"tool_call":{"name":"time.now"}}"#);
+        state.push_tool_result("time.now", "two");
+        state.push_assistant("done");
 
         for i in 1..=17 {
-            history.push(Message::user(format!("q{i}")));
-            history.push(Message::assistant(format!("a{i}")));
+            state.push_user_input(format!("q{i}"));
+            state.push_assistant(format!("a{i}"));
         }
 
-        trim_history_messages(&mut history, &system_messages);
-
-        assert!(history.len() <= MAX_HISTORY_MESSAGES);
-        assert_eq!(history[2].role.as_str(), "user");
-        assert_eq!(history[2].content, "q1");
+        assert!(state.history.len() <= MAX_HISTORY_MESSAGES);
+        assert_eq!(state.history_kinds[2], HistoryMessageKind::UserInput);
+        assert_eq!(state.history[2].content, "q1");
     }
 
     #[test]
     fn trim_history_drops_non_system_when_no_complete_turn_fits() {
-        let system_messages = vec![Message::system("sys"), Message::system("tools")];
-        let mut history = system_messages.clone();
+        let mut state = test_state();
 
-        history.push(Message::user("q0"));
+        state.push_user_input("q0");
         for i in 0..25 {
-            history.push(Message::assistant(r#"{"tool_call":{"name":"time.now"}}"#));
-            history.push(Message::user(format!("Tool 'time.now' result: {i}")));
+            state.push_assistant(r#"{"tool_call":{"name":"time.now"}}"#);
+            state.push_tool_result("time.now", &i.to_string());
         }
 
-        trim_history_messages(&mut history, &system_messages);
+        state.trim_history();
 
-        assert_eq!(history.len(), system_messages.len());
-        assert_eq!(history[0].content, "sys");
-        assert_eq!(history[1].content, "tools");
+        assert!(state.history.len() <= MAX_HISTORY_MESSAGES);
+        assert_eq!(state.history[0].content, "sys");
+        assert_eq!(state.history[1].content, "tools");
+        assert!(
+            state.history_kinds[state.system_len..]
+                .iter()
+                .all(|kind| *kind != HistoryMessageKind::UserInput)
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_engine_handles_plain_assistant_reply() {
+        let mut engine = test_engine();
+        let mut model = StubModel::new(vec!["plain answer"]);
+        let tool_calls = RefCell::new(Vec::<String>::new());
+
+        let answer = engine
+            .run_turn_with(
+                "hello",
+                |messages| model.chat(messages),
+                |call| {
+                    tool_calls.borrow_mut().push(call.name.clone());
+                    Ok(format!("stub-result-for-{}", call.name))
+                },
+            )
+            .await
+            .expect("turn should succeed");
+
+        assert_eq!(answer, "plain answer");
+        assert_eq!(model.call_count, 1);
+        assert!(tool_calls.borrow().is_empty());
+        assert_eq!(
+            engine
+                .history()
+                .last()
+                .expect("history should have reply")
+                .content,
+            answer
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_engine_runs_single_tool_call_then_returns_final_answer() {
+        let mut engine = test_engine();
+        let mut model = StubModel::new(vec![
+            r#"{"tool_call":{"name":"time.now"}}"#,
+            "Here is the final answer.",
+        ]);
+        let tool_calls = RefCell::new(Vec::<String>::new());
+
+        let answer = engine
+            .run_turn_with(
+                "what time?",
+                |messages| model.chat(messages),
+                |call| {
+                    tool_calls.borrow_mut().push(call.name.clone());
+                    Ok(format!("stub-result-for-{}", call.name))
+                },
+            )
+            .await
+            .expect("turn should succeed");
+
+        assert_eq!(answer, "Here is the final answer.");
+        assert_eq!(model.call_count, 2);
+        assert_eq!(tool_calls.borrow().as_slice(), &["time.now".to_string()]);
+        assert!(
+            engine
+                .history()
+                .iter()
+                .any(|msg| msg.content.starts_with("Tool 'time.now' result:")),
+            "tool result should be recorded in history"
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_engine_treats_malformed_tool_output_as_normal_reply() {
+        let mut engine = test_engine();
+        let mixed_output = "Let me check.\n{\"tool_call\":{\"name\":\"time.now\"}}";
+        let mut model = StubModel::new(vec![mixed_output]);
+        let tool_calls = RefCell::new(Vec::<String>::new());
+
+        let answer = engine
+            .run_turn_with(
+                "what time now?",
+                |messages| model.chat(messages),
+                |call| {
+                    tool_calls.borrow_mut().push(call.name.clone());
+                    Ok(format!("stub-result-for-{}", call.name))
+                },
+            )
+            .await
+            .expect("turn should succeed");
+
+        assert_eq!(answer, mixed_output);
+        assert_eq!(model.call_count, 1);
+        assert!(tool_calls.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn turn_engine_stops_when_tool_hop_limit_is_reached() {
+        let mut engine = test_engine();
+        let mut model = StubModel::new(vec![
+            r#"{"tool_call":{"name":"time.now"}}"#,
+            r#"{"tool_call":{"name":"time.now"}}"#,
+            r#"{"tool_call":{"name":"time.now"}}"#,
+        ]);
+        let tool_calls = RefCell::new(Vec::<String>::new());
+
+        let answer = engine
+            .run_turn_with(
+                "keep checking",
+                |messages| model.chat(messages),
+                |call| {
+                    tool_calls.borrow_mut().push(call.name.clone());
+                    Ok(format!("stub-result-for-{}", call.name))
+                },
+            )
+            .await
+            .expect("turn should succeed");
+
+        assert!(
+            answer.contains(&format!(
+                "I stopped after {} tool calls",
+                MAX_TOOL_HOPS_PER_TURN
+            )),
+            "unexpected limit message: {answer}"
+        );
+        assert_eq!(model.call_count, MAX_TOOL_HOPS_PER_TURN + 1);
+        assert_eq!(tool_calls.borrow().len(), MAX_TOOL_HOPS_PER_TURN);
+        assert_eq!(
+            engine
+                .history()
+                .last()
+                .expect("history should include limit message")
+                .content,
+            answer
+        );
     }
 }
