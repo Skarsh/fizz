@@ -34,6 +34,7 @@ Environment variables (all optional):
 - `MODEL` (default: `qwen2.5:3b`)
 - `MODEL_BASE_URL` (default: `http://localhost:11434`)
 - `SYSTEM_PROMPT` (default: `You are a helpful assistant.`)
+- `MODEL_TIMEOUT_SECS` (default: `60`)
 
 At startup, the app automatically loads values from a local `.env` file if present.
 

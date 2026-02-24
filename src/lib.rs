@@ -7,6 +7,7 @@ pub mod repl;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::env;
+use std::time::Duration;
 
 use agent::Agent;
 use config::Config;
@@ -17,6 +18,7 @@ pub async fn run() -> Result<()> {
 
     let cfg = Config::from_env();
     let client = Client::builder()
+        .timeout(Duration::from_secs(cfg.model_timeout_secs))
         .build()
         .context("Failed to initialize HTTP client")?;
 
