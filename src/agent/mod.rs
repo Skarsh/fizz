@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::model::{self, Message};
 
 const MAX_HISTORY_MESSAGES: usize = 40;
+const MAX_TOOL_HOPS_PER_TURN: usize = 2;
 
 pub struct Agent<'a> {
     client: &'a Client,
@@ -39,10 +40,31 @@ impl<'a> Agent<'a> {
         self.history.push(Message::user(user_input));
         self.trim_history();
 
-        let first_response = model::chat(self.client, self.cfg, &self.history).await?;
+        let mut tool_hops = 0usize;
+        let mut response = model::chat(self.client, self.cfg, &self.history).await?;
 
-        if let Some(tool_call) = tools::parse_tool_call(&first_response) {
-            self.history.push(Message::assistant(first_response));
+        loop {
+            let Some(tool_call) = tools::parse_tool_call(&response) else {
+                self.history.push(Message::assistant(response.clone()));
+                self.trim_history();
+                return Ok(response);
+            };
+
+            if tool_hops >= MAX_TOOL_HOPS_PER_TURN {
+                self.history.push(Message::assistant(response));
+                self.trim_history();
+
+                let limit_msg = format!(
+                    "I stopped after {} tool calls in one turn. Please try a simpler request.",
+                    MAX_TOOL_HOPS_PER_TURN
+                );
+                self.history.push(Message::assistant(limit_msg.clone()));
+                self.trim_history();
+                return Ok(limit_msg);
+            }
+
+            tool_hops += 1;
+            self.history.push(Message::assistant(response));
             self.trim_history();
 
             let tool_result = match tools::execute(&tool_call) {
@@ -55,17 +77,8 @@ impl<'a> Agent<'a> {
             )));
             self.trim_history();
 
-            let final_response = model::chat(self.client, self.cfg, &self.history).await?;
-            self.history
-                .push(Message::assistant(final_response.clone()));
-            self.trim_history();
-            return Ok(final_response);
+            response = model::chat(self.client, self.cfg, &self.history).await?;
         }
-
-        self.history
-            .push(Message::assistant(first_response.clone()));
-        self.trim_history();
-        Ok(first_response)
     }
 
     fn trim_history(&mut self) {
