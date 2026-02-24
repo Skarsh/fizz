@@ -16,6 +16,8 @@ Optional NVIDIA GPU bootstrap:
 OLLAMA_GPU=1 ./scripts/install.sh
 ```
 
+`OLLAMA_GPU` is a bootstrap flag consumed by `scripts/install.sh`; the app runtime ignores it.
+
 2. Run one prompt:
 
 ```bash
