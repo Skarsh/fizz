@@ -10,6 +10,12 @@ Basic Rust AI agent harness.
 ./scripts/install.sh
 ```
 
+Optional NVIDIA GPU bootstrap:
+
+```bash
+OLLAMA_GPU=1 ./scripts/install.sh
+```
+
 2. Run one prompt:
 
 ```bash
