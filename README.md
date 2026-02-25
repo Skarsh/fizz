@@ -70,6 +70,10 @@ LOG_FORMAT=json RUST_LOG=fizz=info cargo run -- "Write a haiku about Rust"
 LOG_OUTPUT=file LOG_FILE_PATH=logs/fizz.log RUST_LOG=fizz=info cargo run -- "Write a haiku about Rust"
 ```
 
+Recommended settings:
+- Dev: `LOG_OUTPUT=stderr LOG_FORMAT=pretty RUST_LOG=fizz=debug`
+- CI/Production-like runs: `LOG_OUTPUT=file LOG_FORMAT=json RUST_LOG=fizz=info`
+
 ## Built-in tool
 
 - `time.now`: returns current UTC time and unix time in seconds.
