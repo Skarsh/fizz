@@ -43,8 +43,15 @@ Environment variables (all optional):
 - `MODEL_BASE_URL` (default: `http://localhost:11434`)
 - `SYSTEM_PROMPT` (default: `You are a helpful assistant.`)
 - `MODEL_TIMEOUT_SECS` (default: `60`)
+- `TOOL_RUNTIME` (default: `builtin`, allowed: `builtin|wasm`)
+- `TOOL_TIMEOUT_SECS` (default: `30`)
+- `TOOL_MEMORY_MB` (default: `256`)
+- `TOOL_ALLOW_DIRECT_NETWORK` (default: `false`)
+- `WORKSPACE_FS_MODE` (default: `host`, allowed: `host|overlay|agentfs`)
 
 At startup, the app automatically loads values from a local `.env` file if present.
+
+Sandboxing note: the tool runtime/workspace variables above are currently scaffolding only. The app still runs the existing built-in tool path by default with no policy enforcement changes yet.
 
 ## Logging
 

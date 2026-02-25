@@ -300,10 +300,10 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Kickoff Scope (first PR)
 
-- [ ] Start Phase 0 with config-only scaffolding and default policy structs.
-- [ ] Keep runtime behavior unchanged (`builtin` path remains the default and active path).
-- [ ] Update `.env.example` and `README.md` with new env vars and "no behavior change yet" note.
-- [ ] Require green `fmt`, `clippy`, and `test` checks before merging.
+- [x] Start Phase 0 with config-only scaffolding and default policy structs.
+- [x] Keep runtime behavior unchanged (`builtin` path remains the default and active path).
+- [x] Update `.env.example` and `README.md` with new env vars and "no behavior change yet" note.
+- [x] Require green `fmt`, `clippy`, and `test` checks before merging.
 
 ### Status Legend
 
@@ -314,7 +314,7 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Phase Completion Board
 
-- [ ] Phase 0 complete
+- [x] Phase 0 complete
 - [ ] Phase 1 complete
 - [ ] Phase 2 complete
 - [ ] Phase 3 complete
@@ -326,26 +326,26 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Deliverables
 
-- [ ] `P0.1` Add `TOOL_RUNTIME` config parsing (`builtin|wasm`).
-- [ ] `P0.2` Add `TOOL_TIMEOUT_SECS` config parsing + defaults + tests.
-- [ ] `P0.3` Add `TOOL_MEMORY_MB` config parsing + defaults + tests.
-- [ ] `P0.4` Add `TOOL_ALLOW_DIRECT_NETWORK` config parsing + defaults + tests.
-- [ ] `P0.5` Add `WORKSPACE_FS_MODE` config parsing (`host|overlay|agentfs`) + tests.
-- [ ] `P0.6` Add initial internal policy structs with default values.
-- [ ] `P0.7` Update `README` with new env vars and note that behavior is unchanged.
+- [x] `P0.1` Add `TOOL_RUNTIME` config parsing (`builtin|wasm`).
+- [x] `P0.2` Add `TOOL_TIMEOUT_SECS` config parsing + defaults + tests.
+- [x] `P0.3` Add `TOOL_MEMORY_MB` config parsing + defaults + tests.
+- [x] `P0.4` Add `TOOL_ALLOW_DIRECT_NETWORK` config parsing + defaults + tests.
+- [x] `P0.5` Add `WORKSPACE_FS_MODE` config parsing (`host|overlay|agentfs`) + tests.
+- [x] `P0.6` Add initial internal policy structs with default values.
+- [x] `P0.7` Update `README` with new env vars and note that behavior is unchanged.
 
 ### Suggested Touchpoints
 
-- [ ] `src/config.rs`
+- [x] `src/config.rs`
 - [ ] `src/lib.rs` (if config wiring requires it)
-- [ ] `.env.example`
-- [ ] `README.md`
+- [x] `.env.example`
+- [x] `README.md`
 
 ### Verification
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --all-targets --all-features`
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
+- [x] `cargo test --all-targets --all-features`
 
 ## Phase 1 Detailed Checklist (Execution Abstraction)
 
