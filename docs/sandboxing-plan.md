@@ -291,6 +291,20 @@ Build a sandboxed tool runtime that is seamless for end users and does not requi
 
 Use this section to track progress during implementation. Check items as they are completed.
 
+### Current Baseline (2026-02-25)
+
+- [x] Agent loop, built-in tool execution (`time.now`), and provider wiring are in place.
+- [x] Current behavior is covered by unit and integration tests.
+- [x] Tool runtime abstraction (`ToolRunner`) has been introduced with a built-in runner.
+- [ ] Policy/capability structs and workspace virtualization are not wired yet.
+
+### Kickoff Scope (first PR)
+
+- [ ] Start Phase 0 with config-only scaffolding and default policy structs.
+- [ ] Keep runtime behavior unchanged (`builtin` path remains the default and active path).
+- [ ] Update `.env.example` and `README.md` with new env vars and "no behavior change yet" note.
+- [ ] Require green `fmt`, `clippy`, and `test` checks before merging.
+
 ### Status Legend
 
 - `[ ]` not started
@@ -337,23 +351,23 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Deliverables
 
-- [ ] `P1.1` Introduce `ToolRunner` trait.
-- [ ] `P1.2` Add `BuiltinRunner` implementing `ToolRunner` using current behavior.
-- [ ] `P1.3` Route agent turn loop through `ToolRunner` (remove direct dependency on `tools::execute` in turn engine path).
-- [ ] `P1.4` Keep existing `time.now` behavior identical.
-- [ ] `P1.5` Normalize tool execution error/result type for later wasm and workspace backends.
+- [x] `P1.1` Introduce `ToolRunner` trait.
+- [x] `P1.2` Add `BuiltinRunner` implementing `ToolRunner` using current behavior.
+- [x] `P1.3` Route agent turn loop through `ToolRunner` (remove direct dependency on `tools::execute` in turn engine path).
+- [x] `P1.4` Keep existing `time.now` behavior identical.
+- [x] `P1.5` Normalize tool execution error/result type for later wasm and workspace backends.
 
 ### Suggested Touchpoints
 
-- [ ] `src/agent/mod.rs`
-- [ ] `src/agent/tools.rs` (or split into `runner` + builtin impl modules)
+- [x] `src/agent/mod.rs`
+- [x] `src/agent/tools.rs` (or split into `runner` + builtin impl modules)
 - [ ] new module(s) for runner traits/types (location chosen during implementation)
 
 ### Verification
 
-- [ ] Existing unit tests for tool hop loop remain unchanged and passing.
-- [ ] Add/adjust unit tests proving `ToolRunner` abstraction does not alter outputs.
-- [ ] `cargo test --all-targets --all-features`
+- [x] Existing unit tests for tool hop loop remain unchanged and passing.
+- [x] Add/adjust unit tests proving `ToolRunner` abstraction does not alter outputs.
+- [x] `cargo test --all-targets --all-features`
 
 ## Phase 2 Detailed Checklist (Model Gateway + WorkspaceFS Abstractions)
 

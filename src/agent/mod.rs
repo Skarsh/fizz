@@ -105,6 +105,7 @@ impl TurnEngine {
         user_input: &str,
         client: &Client,
         cfg: &Config,
+        tool_runner: &dyn tools::ToolRunner,
     ) -> Result<String> {
         let client = client.clone();
         let cfg = cfg.clone();
@@ -128,7 +129,7 @@ impl TurnEngine {
                         .instrument(model_span),
                 )
             },
-            tools::execute,
+            |call| tool_runner.execute(call),
         )
         .await
     }
@@ -147,7 +148,7 @@ impl TurnEngine {
     ) -> Result<String>
     where
         C: FnMut(Vec<Message>) -> ModelFuture,
-        E: FnMut(&tools::ToolCall) -> Result<String>,
+        E: FnMut(&tools::ToolCall) -> tools::ToolExecutionResult,
     {
         self.state.push_user_input(user_input);
         debug!(
@@ -198,10 +199,10 @@ impl TurnEngine {
                 Ok(output) => {
                     debug!(
                         tool_name = %tool_call.name,
-                        output_len = output.len(),
+                        output_len = output.content.len(),
                         "tool call succeeded"
                     );
-                    output
+                    output.content
                 }
                 Err(err) => {
                     warn!(tool_name = %tool_call.name, error = %err, "tool call failed");
@@ -222,6 +223,7 @@ impl TurnEngine {
 pub struct Agent<'a> {
     client: &'a Client,
     cfg: &'a Config,
+    tool_runner: Box<dyn tools::ToolRunner>,
     turn_engine: TurnEngine,
     next_turn_id: u64,
 }
@@ -231,6 +233,7 @@ impl<'a> Agent<'a> {
         Self {
             client,
             cfg,
+            tool_runner: Box::new(tools::BuiltinRunner),
             turn_engine: TurnEngine::new(cfg),
             next_turn_id: INITIAL_TURN_ID,
         }
@@ -247,7 +250,13 @@ impl<'a> Agent<'a> {
     pub async fn run_turn(&mut self, user_input: &str) -> Result<String> {
         let turn_id = self.next_turn_id();
         self.turn_engine
-            .run_turn_live(turn_id, user_input, self.client, self.cfg)
+            .run_turn_live(
+                turn_id,
+                user_input,
+                self.client,
+                self.cfg,
+                self.tool_runner.as_ref(),
+            )
             .await
     }
 
@@ -314,6 +323,7 @@ mod tests {
         HistoryMessageKind, MAX_HISTORY_MESSAGES, MAX_TOOL_HOPS_PER_TURN, ModelFuture, TurnEngine,
         TurnState,
     };
+    use crate::agent::tools::ToolOutput;
     use crate::model::Message;
 
     struct StubModel {
@@ -424,7 +434,7 @@ mod tests {
                 |messages| model.chat(messages),
                 |call| {
                     tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(format!("stub-result-for-{}", call.name))
+                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
                 },
             )
             .await
@@ -459,7 +469,7 @@ mod tests {
                 |messages| model.chat(messages),
                 |call| {
                     tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(format!("stub-result-for-{}", call.name))
+                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
                 },
             )
             .await
@@ -491,7 +501,7 @@ mod tests {
                 |messages| model.chat(messages),
                 |call| {
                     tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(format!("stub-result-for-{}", call.name))
+                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
                 },
             )
             .await
@@ -519,7 +529,7 @@ mod tests {
                 |messages| model.chat(messages),
                 |call| {
                     tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(format!("stub-result-for-{}", call.name))
+                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
                 },
             )
             .await

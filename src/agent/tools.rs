@@ -1,12 +1,56 @@
-use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Deserialize;
+use std::error::Error;
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
 pub struct ToolCall {
     pub name: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutput {
+    pub content: String,
+}
+
+impl ToolOutput {
+    pub fn new(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolExecutionError {
+    message: String,
+}
+
+impl ToolExecutionError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for ToolExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for ToolExecutionError {}
+
+pub type ToolExecutionResult = std::result::Result<ToolOutput, ToolExecutionError>;
+
+pub trait ToolRunner {
+    fn execute(&self, call: &ToolCall) -> ToolExecutionResult;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinRunner;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,29 +84,35 @@ pub fn parse_tool_call(text: &str) -> Option<ToolCall> {
     })
 }
 
-pub fn execute(call: &ToolCall) -> Result<String> {
-    debug!(tool_name = %call.name, "running built-in tool");
+impl ToolRunner for BuiltinRunner {
+    fn execute(&self, call: &ToolCall) -> ToolExecutionResult {
+        debug!(tool_name = %call.name, "running built-in tool");
 
-    match call.name.as_str() {
-        "time.now" => {
-            let now = SystemTime::now();
-            let secs = now
-                .duration_since(UNIX_EPOCH)
-                .map_err(|err| anyhow!("time.now failed: {err}"))?
-                .as_secs();
-            let timestamp = DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
-            Ok(format!("{timestamp} (unix: {secs})"))
-        }
-        _ => {
-            warn!(tool_name = %call.name, "unknown built-in tool");
-            Err(anyhow!("unknown tool '{}'", call.name))
+        match call.name.as_str() {
+            "time.now" => {
+                let now = SystemTime::now();
+                let secs = now
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|err| ToolExecutionError::new(format!("time.now failed: {err}")))?
+                    .as_secs();
+                let timestamp =
+                    DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
+                Ok(ToolOutput::new(format!("{timestamp} (unix: {secs})")))
+            }
+            _ => {
+                warn!(tool_name = %call.name, "unknown built-in tool");
+                Err(ToolExecutionError::new(format!(
+                    "unknown tool '{}'",
+                    call.name
+                )))
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolCall, execute, parse_tool_call};
+    use super::{BuiltinRunner, ToolCall, ToolRunner, parse_tool_call};
 
     #[test]
     fn parse_tool_call_reads_name() {
@@ -98,10 +148,12 @@ mod tests {
 
     #[test]
     fn execute_time_now_returns_readable_and_unix() {
-        let output = execute(&ToolCall {
-            name: "time.now".to_string(),
-        })
-        .expect("time.now should work");
+        let output = BuiltinRunner
+            .execute(&ToolCall {
+                name: "time.now".to_string(),
+            })
+            .expect("time.now should work")
+            .content;
         assert!(output.contains("T"));
         assert!(output.contains("Z"));
         assert!(output.contains("(unix: "));
@@ -110,7 +162,7 @@ mod tests {
 
     #[test]
     fn execute_unknown_tool_returns_error() {
-        let result = execute(&ToolCall {
+        let result = BuiltinRunner.execute(&ToolCall {
             name: "missing.tool".to_string(),
         });
         assert!(result.is_err());
