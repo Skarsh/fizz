@@ -300,6 +300,7 @@ Use this section to track progress during implementation. Check items as they ar
 - [x] Agent supports custom runner injection (`Agent::with_tool_runner`) for runtime wiring and tests.
 - [x] Initial sandbox config and policy/resource structs are wired in config parsing.
 - [x] Tool policy config is normalized to a single source of truth (`tool_policy`).
+- [x] `ModelGateway` abstraction and host-backed adapter are implemented in a dedicated module.
 - [ ] Policy enforcement and workspace virtualization are not wired yet.
 
 ### Kickoff Scope (first PR)
@@ -328,7 +329,7 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Next Execution Slice (Phase 2)
 
-- [ ] `N2.1` Add `ModelGateway` trait + host-backed adapter using existing provider path.
+- [x] `N2.1` Add `ModelGateway` trait + host-backed adapter using existing provider path.
 - [ ] `N2.2` Add `WorkspaceFS` trait + `host` backend skeleton.
 - [ ] `N2.3` Wire phase-2 abstractions without changing default runtime behavior.
 
@@ -386,8 +387,8 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Deliverables
 
-- [ ] `P2.1` Introduce `ModelGateway` trait and typed request/response structs.
-- [ ] `P2.2` Implement host-backed gateway adapter using current provider stack.
+- [x] `P2.1` Introduce `ModelGateway` trait and typed request/response structs.
+- [x] `P2.2` Implement host-backed gateway adapter using current provider stack.
 - [ ] `P2.3` Enforce policy check for `model_access` capability.
 - [ ] `P2.4` Introduce `WorkspaceFS` trait with session lifecycle methods.
 - [ ] `P2.5` Implement `host` `WorkspaceFS` backend.
@@ -395,14 +396,15 @@ Use this section to track progress during implementation. Check items as they ar
 
 ### Suggested Touchpoints
 
-- [ ] `src/model.rs` and/or new gateway module(s)
+- [x] `src/model_gateway.rs` (new gateway module)
+- [x] `src/lib.rs` (module export)
 - [ ] `src/providers/*` (reuse existing provider code through gateway)
 - [ ] new workspace fs module(s), for example `src/workspace_fs/*`
 - [ ] config wiring for backend selection
 
 ### Verification
 
-- [ ] Unit tests for `ModelGateway` request/response mapping.
+- [x] Unit tests for `ModelGateway` request/response mapping.
 - [ ] Unit tests for policy deny path when `model_access` is not granted.
 - [ ] Contract tests for `WorkspaceFS` trait against `host` backend.
 

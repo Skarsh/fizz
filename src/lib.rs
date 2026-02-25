@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 mod logging;
 pub mod model;
+pub mod model_gateway;
 pub mod providers;
 pub mod repl;
 

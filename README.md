@@ -51,7 +51,7 @@ Environment variables (all optional):
 
 At startup, the app automatically loads values from a local `.env` file if present.
 
-Sandboxing note: the tool runtime/workspace variables above are currently scaffolding only. The app still runs the existing built-in tool path by default with no policy enforcement changes yet.
+Sandboxing note: the tool runtime/workspace variables above are currently scaffolding only. The app still runs the existing built-in tool path by default with no policy enforcement changes yet. A host `ModelGateway` abstraction now exists in code, but it is not wired into the runtime execution path yet.
 
 ## Logging
 
