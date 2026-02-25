@@ -48,7 +48,7 @@ At startup, the app automatically loads values from a local `.env` file if prese
 
 ## Logging
 
-Logging uses `tracing` and writes to stderr.
+Logging uses `tracing` and writes to stderr by default.
 
 - Default filter: `warn,fizz=info`
 - Default format: `pretty`

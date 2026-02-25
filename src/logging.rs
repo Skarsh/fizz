@@ -4,14 +4,16 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tracing_appender::non_blocking::{self, WorkerGuard};
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
 
 const DEFAULT_LOG_FILTER: &str = "warn,fizz=info";
 const DEFAULT_LOG_FORMAT: &str = "pretty";
 const DEFAULT_LOG_OUTPUT: &str = "stderr";
 const DEFAULT_LOG_FILE_PATH: &str = "logs/fizz.log";
 
-static LOG_GUARDS: OnceLock<Vec<WorkerGuard>> = OnceLock::new();
+static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+
+type InitResult = Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LogFormat {
@@ -70,100 +72,72 @@ fn build_file_writer(path: &Path) -> std::io::Result<(non_blocking::NonBlocking,
     Ok(tracing_appender::non_blocking(appender))
 }
 
+fn env_filter_from_env() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER))
+}
+
+fn stderr_writer() -> BoxMakeWriter {
+    BoxMakeWriter::new(std::io::stderr)
+}
+
+fn init_with_writer(format: LogFormat, env_filter: EnvFilter, writer: BoxMakeWriter) -> InitResult {
+    match format {
+        LogFormat::Pretty => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(writer)
+            .try_init(),
+        LogFormat::Json => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .with_writer(writer)
+            .try_init(),
+    }
+}
+
+fn init_file_output(format: LogFormat, file_path: &Path, include_stderr: bool) -> InitResult {
+    let fallback_message = if include_stderr {
+        "using stderr only"
+    } else {
+        "using stderr instead"
+    };
+
+    match build_file_writer(file_path) {
+        Ok((file_writer, guard)) => {
+            let writer = if include_stderr {
+                BoxMakeWriter::new(std::io::stderr.and(file_writer))
+            } else {
+                BoxMakeWriter::new(file_writer)
+            };
+
+            let init_result = init_with_writer(format, env_filter_from_env(), writer);
+            if init_result.is_ok() {
+                let _ = LOG_GUARD.set(guard);
+            }
+            init_result
+        }
+        Err(err) => {
+            let mode = if include_stderr { "both" } else { "file" };
+            eprintln!(
+                "fizz: failed to initialize LOG_OUTPUT={} at '{}': {}; {}",
+                mode,
+                file_path.display(),
+                err,
+                fallback_message
+            );
+            init_with_writer(format, env_filter_from_env(), stderr_writer())
+        }
+    }
+}
+
 pub fn init() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
     let format = parse_log_format(env::var("LOG_FORMAT").ok().as_deref());
     let output = parse_log_output(env::var("LOG_OUTPUT").ok().as_deref());
     let file_path = parse_log_file_path(env::var("LOG_FILE_PATH").ok().as_deref());
 
     let init_result = match output {
-        LogOutput::Stderr => match format {
-            LogFormat::Pretty => tracing_subscriber::fmt()
-                .with_env_filter(env_filter)
-                .with_writer(std::io::stderr)
-                .try_init(),
-            LogFormat::Json => tracing_subscriber::fmt()
-                .json()
-                .with_env_filter(env_filter)
-                .with_writer(std::io::stderr)
-                .try_init(),
-        },
-        LogOutput::File => match build_file_writer(&file_path) {
-            Ok((file_writer, guard)) => {
-                let init_result = match format {
-                    LogFormat::Pretty => tracing_subscriber::fmt()
-                        .with_env_filter(env_filter)
-                        .with_writer(file_writer)
-                        .try_init(),
-                    LogFormat::Json => tracing_subscriber::fmt()
-                        .json()
-                        .with_env_filter(env_filter)
-                        .with_writer(file_writer)
-                        .try_init(),
-                };
-                if init_result.is_ok() {
-                    let _ = LOG_GUARDS.set(vec![guard]);
-                }
-                init_result
-            }
-            Err(err) => {
-                eprintln!(
-                    "fizz: failed to initialize LOG_OUTPUT=file at '{}': {}; using stderr instead",
-                    file_path.display(),
-                    err
-                );
-                match format {
-                    LogFormat::Pretty => tracing_subscriber::fmt()
-                        .with_env_filter(env_filter)
-                        .with_writer(std::io::stderr)
-                        .try_init(),
-                    LogFormat::Json => tracing_subscriber::fmt()
-                        .json()
-                        .with_env_filter(env_filter)
-                        .with_writer(std::io::stderr)
-                        .try_init(),
-                }
-            }
-        },
-        LogOutput::Both => match build_file_writer(&file_path) {
-            Ok((file_writer, guard)) => {
-                let tee_writer = std::io::stderr.and(file_writer);
-                let init_result = match format {
-                    LogFormat::Pretty => tracing_subscriber::fmt()
-                        .with_env_filter(env_filter)
-                        .with_writer(tee_writer)
-                        .try_init(),
-                    LogFormat::Json => tracing_subscriber::fmt()
-                        .json()
-                        .with_env_filter(env_filter)
-                        .with_writer(tee_writer)
-                        .try_init(),
-                };
-                if init_result.is_ok() {
-                    let _ = LOG_GUARDS.set(vec![guard]);
-                }
-                init_result
-            }
-            Err(err) => {
-                eprintln!(
-                    "fizz: failed to initialize LOG_OUTPUT=both file path '{}': {}; using stderr only",
-                    file_path.display(),
-                    err
-                );
-                match format {
-                    LogFormat::Pretty => tracing_subscriber::fmt()
-                        .with_env_filter(env_filter)
-                        .with_writer(std::io::stderr)
-                        .try_init(),
-                    LogFormat::Json => tracing_subscriber::fmt()
-                        .json()
-                        .with_env_filter(env_filter)
-                        .with_writer(std::io::stderr)
-                        .try_init(),
-                }
-            }
-        },
+        LogOutput::Stderr => init_with_writer(format, env_filter_from_env(), stderr_writer()),
+        LogOutput::File => init_file_output(format, &file_path, false),
+        LogOutput::Both => init_file_output(format, &file_path, true),
     };
 
     let _ = init_result;

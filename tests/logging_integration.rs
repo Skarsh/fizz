@@ -149,6 +149,52 @@ fn both_output_writes_logs_to_stderr_and_file() {
 }
 
 #[test]
+fn both_output_with_json_writes_json_to_stderr_and_file() {
+    let dir = unique_temp_dir("both-json");
+    let log_path = dir.join("fizz.log");
+    let output = run_with_logging_env("both", "json", Some(&log_path));
+    assert!(
+        !output.status.success(),
+        "invalid provider should fail command"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr_json_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .collect();
+    assert!(
+        !stderr_json_lines.is_empty(),
+        "expected JSON log lines on stderr, got:\n{stderr}"
+    );
+
+    let rotated = find_rotated_log_file(&dir, "fizz.log");
+    let file_contents = fs::read_to_string(&rotated).expect("failed to read rotated log file");
+    let file_json_lines: Vec<&str> = file_contents
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .collect();
+    assert!(
+        !file_json_lines.is_empty(),
+        "expected JSON log lines in file, got:\n{file_contents}"
+    );
+    assert!(
+        file_json_lines.iter().any(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|value| value.get("fields").cloned())
+                .and_then(|fields| fields.get("message").cloned())
+                .and_then(|message| message.as_str().map(str::to_string))
+                .as_deref()
+                == Some("loaded runtime configuration")
+        }),
+        "expected startup log message in file JSON output, got:\n{file_contents}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn invalid_file_path_falls_back_to_stderr_logging() {
     let dir = unique_temp_dir("fallback");
     let blocking_file = dir.join("not-a-directory");
