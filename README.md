@@ -51,11 +51,17 @@ At startup, the app automatically loads values from a local `.env` file if prese
 Logging uses `tracing` and writes to stderr.
 
 - Default filter: `warn,fizz=info`
+- Default format: `pretty`
+- Set `LOG_FORMAT=json` for machine-readable logs.
 - Turn, model, and tool logs are correlated by `turn_id`.
 - Override with `RUST_LOG`, for example:
 
 ```bash
 RUST_LOG=fizz=debug cargo run -- "Write a haiku about Rust"
+```
+
+```bash
+LOG_FORMAT=json RUST_LOG=fizz=info cargo run -- "Write a haiku about Rust"
 ```
 
 ## Built-in tool
