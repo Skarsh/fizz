@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, warn};
 
 pub struct ToolCall {
     pub name: String,
@@ -40,6 +41,8 @@ pub fn parse_tool_call(text: &str) -> Option<ToolCall> {
 }
 
 pub fn execute(call: &ToolCall) -> Result<String> {
+    debug!(tool_name = %call.name, "running built-in tool");
+
     match call.name.as_str() {
         "time.now" => {
             let now = SystemTime::now();
@@ -50,7 +53,10 @@ pub fn execute(call: &ToolCall) -> Result<String> {
             let timestamp = DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
             Ok(format!("{timestamp} (unix: {secs})"))
         }
-        _ => Err(anyhow!("unknown tool '{}'", call.name)),
+        _ => {
+            warn!(tool_name = %call.name, "unknown built-in tool");
+            Err(anyhow!("unknown tool '{}'", call.name))
+        }
     }
 }
 

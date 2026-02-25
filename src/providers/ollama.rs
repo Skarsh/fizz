@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 use crate::config::Config;
 use crate::model::Message;
@@ -50,13 +51,27 @@ pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result
         stream: false,
         messages: to_ollama_messages(messages),
     };
+    debug!(
+        api_url = %api_url,
+        model = %cfg.model,
+        message_count = messages.len(),
+        "sending ollama chat request"
+    );
 
     let response = client
         .post(&api_url)
         .json(&body)
         .send()
         .await
-        .map_err(|err| model_api_request_error(err, &api_url, cfg.model_timeout_secs))?;
+        .map_err(|err| {
+            warn!(
+                api_url = %api_url,
+                model = %cfg.model,
+                error = %err,
+                "ollama request failed"
+            );
+            model_api_request_error(err, &api_url, cfg.model_timeout_secs)
+        })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -64,6 +79,13 @@ pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result
             .text()
             .await
             .unwrap_or_else(|_| "<failed to read response body>".to_string());
+        warn!(
+            api_url = %api_url,
+            model = %cfg.model,
+            status = %status,
+            response_body_len = response_body.len(),
+            "ollama returned non-success status"
+        );
         return Err(anyhow!(
             "Model request failed with status {}: {}",
             status,
@@ -75,6 +97,11 @@ pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result
         .json()
         .await
         .context("Failed to parse model chat response")?;
+    debug!(
+        model = %cfg.model,
+        response_len = parsed.message.content.len(),
+        "received ollama chat response"
+    );
     Ok(parsed.message.content)
 }
 

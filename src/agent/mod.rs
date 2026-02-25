@@ -4,6 +4,7 @@ use anyhow::Result;
 use reqwest::Client;
 use std::future::Future;
 use std::pin::Pin;
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::model::{self, Message};
@@ -129,6 +130,11 @@ impl TurnEngine {
         E: FnMut(&tools::ToolCall) -> Result<String>,
     {
         self.state.push_user_input(user_input);
+        debug!(
+            user_input_len = user_input.len(),
+            history_len = self.state.history().len(),
+            "started turn"
+        );
 
         let mut tool_hops = 0usize;
         let mut response = chat(self.state.history().to_vec()).await?;
@@ -136,10 +142,20 @@ impl TurnEngine {
         loop {
             let Some(tool_call) = tools::parse_tool_call(&response) else {
                 self.state.push_assistant(response.clone());
+                info!(
+                    tool_hops,
+                    response_len = response.len(),
+                    history_len = self.state.history().len(),
+                    "completed turn"
+                );
                 return Ok(response);
             };
 
             if tool_hops >= MAX_TOOL_HOPS_PER_TURN {
+                warn!(
+                    max_tool_hops = MAX_TOOL_HOPS_PER_TURN,
+                    tool_hops, "tool hop limit reached"
+                );
                 let limit_msg = format!(
                     "I stopped after {} tool calls in one turn. Please try a simpler request.",
                     MAX_TOOL_HOPS_PER_TURN
@@ -149,13 +165,28 @@ impl TurnEngine {
             }
 
             tool_hops += 1;
+            info!(tool_name = %tool_call.name, tool_hop = tool_hops, "executing tool call");
             self.state.push_assistant(response);
 
             let tool_result = match execute_tool(&tool_call) {
-                Ok(output) => output,
-                Err(err) => format!("ERROR: {err}"),
+                Ok(output) => {
+                    debug!(
+                        tool_name = %tool_call.name,
+                        output_len = output.len(),
+                        "tool call succeeded"
+                    );
+                    output
+                }
+                Err(err) => {
+                    warn!(tool_name = %tool_call.name, error = %err, "tool call failed");
+                    format!("ERROR: {err}")
+                }
             };
             self.state.push_tool_result(&tool_call.name, &tool_result);
+            debug!(
+                history_len = self.state.history().len(),
+                "requesting follow-up model response"
+            );
 
             response = chat(self.state.history().to_vec()).await?;
         }

@@ -46,6 +46,17 @@ Environment variables (all optional):
 
 At startup, the app automatically loads values from a local `.env` file if present.
 
+## Logging
+
+Logging uses `tracing` and writes to stderr.
+
+- Default filter: `warn,fizz=info`
+- Override with `RUST_LOG`, for example:
+
+```bash
+RUST_LOG=fizz=debug cargo run -- "Write a haiku about Rust"
+```
+
 ## Built-in tool
 
 - `time.now`: returns current UTC time and unix time in seconds.

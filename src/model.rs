@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use reqwest::Client;
+use tracing::{debug, warn};
 
 use crate::config::Config;
 use crate::providers;
@@ -51,11 +52,24 @@ impl Message {
 }
 
 pub async fn chat(client: &Client, cfg: &Config, messages: &[Message]) -> Result<String> {
-    match cfg.model_provider.to_ascii_lowercase().as_str() {
-        "ollama" => providers::ollama::chat(client, cfg, messages).await,
-        other => Err(anyhow!(
-            "Unsupported MODEL_PROVIDER='{}'. Supported providers: ollama.",
-            other
-        )),
+    let provider = cfg.model_provider.to_ascii_lowercase();
+
+    match provider.as_str() {
+        "ollama" => {
+            debug!(
+                provider = "ollama",
+                model = %cfg.model,
+                message_count = messages.len(),
+                "dispatching model chat request"
+            );
+            providers::ollama::chat(client, cfg, messages).await
+        }
+        other => {
+            warn!(provider = %other, "unsupported model provider configured");
+            Err(anyhow!(
+                "Unsupported MODEL_PROVIDER='{}'. Supported providers: ollama.",
+                other
+            ))
+        }
     }
 }
