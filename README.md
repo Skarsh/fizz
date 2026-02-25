@@ -53,6 +53,8 @@ Logging uses `tracing` and writes to stderr.
 - Default filter: `warn,fizz=info`
 - Default format: `pretty`
 - Set `LOG_FORMAT=json` for machine-readable logs.
+- Output routing via `LOG_OUTPUT=stderr|file|both` (default: `stderr`)
+- File output path via `LOG_FILE_PATH` (default: `logs/fizz.log`, daily rotation)
 - Turn, model, and tool logs are correlated by `turn_id`.
 - Override with `RUST_LOG`, for example:
 
@@ -62,6 +64,10 @@ RUST_LOG=fizz=debug cargo run -- "Write a haiku about Rust"
 
 ```bash
 LOG_FORMAT=json RUST_LOG=fizz=info cargo run -- "Write a haiku about Rust"
+```
+
+```bash
+LOG_OUTPUT=file LOG_FILE_PATH=logs/fizz.log RUST_LOG=fizz=info cargo run -- "Write a haiku about Rust"
 ```
 
 ## Built-in tool
