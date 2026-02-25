@@ -4,13 +4,14 @@ use anyhow::Result;
 use reqwest::Client;
 use std::future::Future;
 use std::pin::Pin;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::config::Config;
 use crate::model::{self, Message};
 
 const MAX_HISTORY_MESSAGES: usize = 40;
 const MAX_TOOL_HOPS_PER_TURN: usize = 2;
+const INITIAL_TURN_ID: u64 = 1;
 
 type ModelFuture = Pin<Box<dyn Future<Output = Result<String>>>>;
 
@@ -100,6 +101,7 @@ impl TurnEngine {
 
     async fn run_turn_live(
         &mut self,
+        turn_id: u64,
         user_input: &str,
         client: &Client,
         cfg: &Config,
@@ -108,19 +110,37 @@ impl TurnEngine {
         let cfg = cfg.clone();
 
         self.run_turn_with(
+            turn_id,
             user_input,
             move |messages| {
                 let client = client.clone();
                 let cfg = cfg.clone();
-                Box::pin(async move { model::chat(&client, &cfg, &messages).await })
+                let message_count = messages.len();
+                let model_span = info_span!(
+                    "model.chat",
+                    turn_id,
+                    provider = %cfg.model_provider,
+                    model = %cfg.model,
+                    message_count
+                );
+                Box::pin(
+                    async move { model::chat(&client, &cfg, &messages).await }
+                        .instrument(model_span),
+                )
             },
             tools::execute,
         )
         .await
     }
 
+    #[tracing::instrument(
+        name = "agent.turn",
+        skip_all,
+        fields(turn_id = turn_id, user_input_len = user_input.len())
+    )]
     async fn run_turn_with<C, E>(
         &mut self,
+        turn_id: u64,
         user_input: &str,
         mut chat: C,
         mut execute_tool: E,
@@ -168,7 +188,13 @@ impl TurnEngine {
             info!(tool_name = %tool_call.name, tool_hop = tool_hops, "executing tool call");
             self.state.push_assistant(response);
 
-            let tool_result = match execute_tool(&tool_call) {
+            let tool_span = info_span!(
+                "tool.call",
+                turn_id,
+                tool_hop = tool_hops,
+                tool_name = %tool_call.name
+            );
+            let tool_result = match tool_span.in_scope(|| execute_tool(&tool_call)) {
                 Ok(output) => {
                     debug!(
                         tool_name = %tool_call.name,
@@ -197,6 +223,7 @@ pub struct Agent<'a> {
     client: &'a Client,
     cfg: &'a Config,
     turn_engine: TurnEngine,
+    next_turn_id: u64,
 }
 
 impl<'a> Agent<'a> {
@@ -205,6 +232,7 @@ impl<'a> Agent<'a> {
             client,
             cfg,
             turn_engine: TurnEngine::new(cfg),
+            next_turn_id: INITIAL_TURN_ID,
         }
     }
 
@@ -217,9 +245,16 @@ impl<'a> Agent<'a> {
     }
 
     pub async fn run_turn(&mut self, user_input: &str) -> Result<String> {
+        let turn_id = self.next_turn_id();
         self.turn_engine
-            .run_turn_live(user_input, self.client, self.cfg)
+            .run_turn_live(turn_id, user_input, self.client, self.cfg)
             .await
+    }
+
+    fn next_turn_id(&mut self) -> u64 {
+        let turn_id = self.next_turn_id;
+        self.next_turn_id = self.next_turn_id.saturating_add(1);
+        turn_id
     }
 }
 
@@ -384,6 +419,7 @@ mod tests {
 
         let answer = engine
             .run_turn_with(
+                1,
                 "hello",
                 |messages| model.chat(messages),
                 |call| {
@@ -418,6 +454,7 @@ mod tests {
 
         let answer = engine
             .run_turn_with(
+                2,
                 "what time?",
                 |messages| model.chat(messages),
                 |call| {
@@ -449,6 +486,7 @@ mod tests {
 
         let answer = engine
             .run_turn_with(
+                3,
                 "what time now?",
                 |messages| model.chat(messages),
                 |call| {
@@ -476,6 +514,7 @@ mod tests {
 
         let answer = engine
             .run_turn_with(
+                4,
                 "keep checking",
                 |messages| model.chat(messages),
                 |call| {

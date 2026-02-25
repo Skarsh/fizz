@@ -51,6 +51,7 @@ At startup, the app automatically loads values from a local `.env` file if prese
 Logging uses `tracing` and writes to stderr.
 
 - Default filter: `warn,fizz=info`
+- Turn, model, and tool logs are correlated by `turn_id`.
 - Override with `RUST_LOG`, for example:
 
 ```bash
