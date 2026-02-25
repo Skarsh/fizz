@@ -2,9 +2,12 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
     pub name: String,
 }
@@ -44,9 +47,10 @@ impl fmt::Display for ToolExecutionError {
 impl Error for ToolExecutionError {}
 
 pub type ToolExecutionResult = std::result::Result<ToolOutput, ToolExecutionError>;
+pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolExecutionResult> + 'a>>;
 
 pub trait ToolRunner {
-    fn execute(&self, call: &ToolCall) -> ToolExecutionResult;
+    fn execute<'a>(&'a self, call: &'a ToolCall) -> ToolFuture<'a>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -85,28 +89,30 @@ pub fn parse_tool_call(text: &str) -> Option<ToolCall> {
 }
 
 impl ToolRunner for BuiltinRunner {
-    fn execute(&self, call: &ToolCall) -> ToolExecutionResult {
-        debug!(tool_name = %call.name, "running built-in tool");
+    fn execute<'a>(&'a self, call: &'a ToolCall) -> ToolFuture<'a> {
+        Box::pin(async move {
+            debug!(tool_name = %call.name, "running built-in tool");
 
-        match call.name.as_str() {
-            "time.now" => {
-                let now = SystemTime::now();
-                let secs = now
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|err| ToolExecutionError::new(format!("time.now failed: {err}")))?
-                    .as_secs();
-                let timestamp =
-                    DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
-                Ok(ToolOutput::new(format!("{timestamp} (unix: {secs})")))
+            match call.name.as_str() {
+                "time.now" => {
+                    let now = SystemTime::now();
+                    let secs = now
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|err| ToolExecutionError::new(format!("time.now failed: {err}")))?
+                        .as_secs();
+                    let timestamp =
+                        DateTime::<Utc>::from(now).to_rfc3339_opts(SecondsFormat::Secs, true);
+                    Ok(ToolOutput::new(format!("{timestamp} (unix: {secs})")))
+                }
+                _ => {
+                    warn!(tool_name = %call.name, "unknown built-in tool");
+                    Err(ToolExecutionError::new(format!(
+                        "unknown tool '{}'",
+                        call.name
+                    )))
+                }
             }
-            _ => {
-                warn!(tool_name = %call.name, "unknown built-in tool");
-                Err(ToolExecutionError::new(format!(
-                    "unknown tool '{}'",
-                    call.name
-                )))
-            }
-        }
+        })
     }
 }
 
@@ -146,12 +152,13 @@ mod tests {
         assert!(parse_tool_call(r#"{"tool_call":{"name":"   "}}"#).is_none());
     }
 
-    #[test]
-    fn execute_time_now_returns_readable_and_unix() {
+    #[tokio::test]
+    async fn execute_time_now_returns_readable_and_unix() {
         let output = BuiltinRunner
             .execute(&ToolCall {
                 name: "time.now".to_string(),
             })
+            .await
             .expect("time.now should work")
             .content;
         assert!(output.contains("T"));
@@ -160,11 +167,13 @@ mod tests {
         assert!(output.ends_with(')'));
     }
 
-    #[test]
-    fn execute_unknown_tool_returns_error() {
-        let result = BuiltinRunner.execute(&ToolCall {
-            name: "missing.tool".to_string(),
-        });
+    #[tokio::test]
+    async fn execute_unknown_tool_returns_error() {
+        let result = BuiltinRunner
+            .execute(&ToolCall {
+                name: "missing.tool".to_string(),
+            })
+            .await;
         assert!(result.is_err());
     }
 }

@@ -296,7 +296,11 @@ Use this section to track progress during implementation. Check items as they ar
 - [x] Agent loop, built-in tool execution (`time.now`), and provider wiring are in place.
 - [x] Current behavior is covered by unit and integration tests.
 - [x] Tool runtime abstraction (`ToolRunner`) has been introduced with a built-in runner.
-- [ ] Policy/capability structs and workspace virtualization are not wired yet.
+- [x] Tool runner interface is async-ready for future model-gateway/wasm-backed runners.
+- [x] Agent supports custom runner injection (`Agent::with_tool_runner`) for runtime wiring and tests.
+- [x] Initial sandbox config and policy/resource structs are wired in config parsing.
+- [x] Tool policy config is normalized to a single source of truth (`tool_policy`).
+- [ ] Policy enforcement and workspace virtualization are not wired yet.
 
 ### Kickoff Scope (first PR)
 
@@ -315,12 +319,18 @@ Use this section to track progress during implementation. Check items as they ar
 ### Phase Completion Board
 
 - [x] Phase 0 complete
-- [ ] Phase 1 complete
+- [x] Phase 1 complete
 - [ ] Phase 2 complete
 - [ ] Phase 3 complete
 - [ ] Phase 4 complete
 - [ ] Phase 5 complete
 - [ ] Phase 6 complete
+
+### Next Execution Slice (Phase 2)
+
+- [ ] `N2.1` Add `ModelGateway` trait + host-backed adapter using existing provider path.
+- [ ] `N2.2` Add `WorkspaceFS` trait + `host` backend skeleton.
+- [ ] `N2.3` Wire phase-2 abstractions without changing default runtime behavior.
 
 ## Phase 0 Detailed Checklist (Baseline and Guardrails)
 
@@ -333,6 +343,7 @@ Use this section to track progress during implementation. Check items as they ar
 - [x] `P0.5` Add `WORKSPACE_FS_MODE` config parsing (`host|overlay|agentfs`) + tests.
 - [x] `P0.6` Add initial internal policy structs with default values.
 - [x] `P0.7` Update `README` with new env vars and note that behavior is unchanged.
+- [x] `P0.8` Keep tool policy values in one canonical config field (`tool_policy`) to avoid drift.
 
 ### Suggested Touchpoints
 
@@ -356,12 +367,14 @@ Use this section to track progress during implementation. Check items as they ar
 - [x] `P1.3` Route agent turn loop through `ToolRunner` (remove direct dependency on `tools::execute` in turn engine path).
 - [x] `P1.4` Keep existing `time.now` behavior identical.
 - [x] `P1.5` Normalize tool execution error/result type for later wasm and workspace backends.
+- [x] `P1.6` Make `ToolRunner` async-ready to avoid interface churn in later phases.
+- [x] `P1.7` Add `Agent::with_tool_runner` for injectable runtime selection/testing.
 
 ### Suggested Touchpoints
 
 - [x] `src/agent/mod.rs`
 - [x] `src/agent/tools.rs` (or split into `runner` + builtin impl modules)
-- [ ] new module(s) for runner traits/types (location chosen during implementation)
+- [x] new module(s) for runner traits/types (kept in `src/agent/tools.rs` for now)
 
 ### Verification
 

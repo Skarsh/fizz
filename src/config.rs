@@ -79,9 +79,6 @@ pub struct Config {
     pub system_prompt: String,
     pub model_timeout_secs: u64,
     pub tool_runtime: ToolRuntime,
-    pub tool_timeout_secs: u64,
-    pub tool_memory_mb: u64,
-    pub tool_allow_direct_network: bool,
     pub workspace_fs_mode: WorkspaceFsMode,
     pub tool_policy: ToolPolicy,
 }
@@ -120,12 +117,21 @@ impl Config {
                 .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
             model_timeout_secs,
             tool_runtime,
-            tool_timeout_secs,
-            tool_memory_mb,
-            tool_allow_direct_network,
             workspace_fs_mode,
             tool_policy,
         }
+    }
+
+    pub fn tool_timeout_secs(&self) -> u64 {
+        self.tool_policy.resource_limits.timeout_secs
+    }
+
+    pub fn tool_memory_mb(&self) -> u64 {
+        self.tool_policy.resource_limits.memory_mb
+    }
+
+    pub fn tool_allow_direct_network(&self) -> bool {
+        self.tool_policy.allow_direct_network
     }
 }
 
@@ -204,10 +210,10 @@ mod tests {
         assert_eq!(cfg.system_prompt, DEFAULT_SYSTEM_PROMPT);
         assert_eq!(cfg.model_timeout_secs, DEFAULT_MODEL_TIMEOUT_SECS);
         assert_eq!(cfg.tool_runtime, ToolRuntime::Builtin);
-        assert_eq!(cfg.tool_timeout_secs, DEFAULT_TOOL_TIMEOUT_SECS);
-        assert_eq!(cfg.tool_memory_mb, DEFAULT_TOOL_MEMORY_MB);
+        assert_eq!(cfg.tool_timeout_secs(), DEFAULT_TOOL_TIMEOUT_SECS);
+        assert_eq!(cfg.tool_memory_mb(), DEFAULT_TOOL_MEMORY_MB);
         assert_eq!(
-            cfg.tool_allow_direct_network,
+            cfg.tool_allow_direct_network(),
             DEFAULT_TOOL_ALLOW_DIRECT_NETWORK
         );
         assert_eq!(cfg.workspace_fs_mode, WorkspaceFsMode::Host);
@@ -235,9 +241,9 @@ mod tests {
         assert_eq!(cfg.system_prompt, "Be concise.");
         assert_eq!(cfg.model_timeout_secs, 15);
         assert_eq!(cfg.tool_runtime, ToolRuntime::Wasm);
-        assert_eq!(cfg.tool_timeout_secs, 9);
-        assert_eq!(cfg.tool_memory_mb, 512);
-        assert!(cfg.tool_allow_direct_network);
+        assert_eq!(cfg.tool_timeout_secs(), 9);
+        assert_eq!(cfg.tool_memory_mb(), 512);
+        assert!(cfg.tool_allow_direct_network());
         assert_eq!(cfg.workspace_fs_mode, WorkspaceFsMode::Overlay);
         assert_eq!(
             cfg.tool_policy,
@@ -363,10 +369,10 @@ mod tests {
         ]);
 
         assert_eq!(cfg.tool_runtime, ToolRuntime::Builtin);
-        assert_eq!(cfg.tool_timeout_secs, DEFAULT_TOOL_TIMEOUT_SECS);
-        assert_eq!(cfg.tool_memory_mb, DEFAULT_TOOL_MEMORY_MB);
+        assert_eq!(cfg.tool_timeout_secs(), DEFAULT_TOOL_TIMEOUT_SECS);
+        assert_eq!(cfg.tool_memory_mb(), DEFAULT_TOOL_MEMORY_MB);
         assert_eq!(
-            cfg.tool_allow_direct_network,
+            cfg.tool_allow_direct_network(),
             DEFAULT_TOOL_ALLOW_DIRECT_NETWORK
         );
         assert_eq!(cfg.workspace_fs_mode, WorkspaceFsMode::Host);

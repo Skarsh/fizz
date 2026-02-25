@@ -129,7 +129,7 @@ impl TurnEngine {
                         .instrument(model_span),
                 )
             },
-            |call| tool_runner.execute(call),
+            tool_runner,
         )
         .await
     }
@@ -139,16 +139,15 @@ impl TurnEngine {
         skip_all,
         fields(turn_id = turn_id, user_input_len = user_input.len())
     )]
-    async fn run_turn_with<C, E>(
+    async fn run_turn_with<C>(
         &mut self,
         turn_id: u64,
         user_input: &str,
         mut chat: C,
-        mut execute_tool: E,
+        tool_runner: &dyn tools::ToolRunner,
     ) -> Result<String>
     where
         C: FnMut(Vec<Message>) -> ModelFuture,
-        E: FnMut(&tools::ToolCall) -> tools::ToolExecutionResult,
     {
         self.state.push_user_input(user_input);
         debug!(
@@ -195,7 +194,7 @@ impl TurnEngine {
                 tool_hop = tool_hops,
                 tool_name = %tool_call.name
             );
-            let tool_result = match tool_span.in_scope(|| execute_tool(&tool_call)) {
+            let tool_result = match tool_runner.execute(&tool_call).instrument(tool_span).await {
                 Ok(output) => {
                     debug!(
                         tool_name = %tool_call.name,
@@ -230,10 +229,18 @@ pub struct Agent<'a> {
 
 impl<'a> Agent<'a> {
     pub fn new(client: &'a Client, cfg: &'a Config) -> Self {
+        Self::with_tool_runner(client, cfg, Box::new(tools::BuiltinRunner))
+    }
+
+    pub fn with_tool_runner(
+        client: &'a Client,
+        cfg: &'a Config,
+        tool_runner: Box<dyn tools::ToolRunner>,
+    ) -> Self {
         Self {
             client,
             cfg,
-            tool_runner: Box::new(tools::BuiltinRunner),
+            tool_runner,
             turn_engine: TurnEngine::new(cfg),
             next_turn_id: INITIAL_TURN_ID,
         }
@@ -323,7 +330,7 @@ mod tests {
         HistoryMessageKind, MAX_HISTORY_MESSAGES, MAX_TOOL_HOPS_PER_TURN, ModelFuture, TurnEngine,
         TurnState,
     };
-    use crate::agent::tools::ToolOutput;
+    use crate::agent::tools::{ToolCall, ToolFuture, ToolOutput, ToolRunner};
     use crate::model::Message;
 
     struct StubModel {
@@ -346,6 +353,25 @@ mod tests {
                 .pop_front()
                 .expect("stub model missing queued response");
             Box::pin(async move { Ok(response) })
+        }
+    }
+
+    #[derive(Default)]
+    struct StubToolRunner {
+        calls: RefCell<Vec<String>>,
+    }
+
+    impl StubToolRunner {
+        fn calls(&self) -> std::cell::Ref<'_, Vec<String>> {
+            self.calls.borrow()
+        }
+    }
+
+    impl ToolRunner for StubToolRunner {
+        fn execute<'a>(&'a self, call: &'a ToolCall) -> ToolFuture<'a> {
+            self.calls.borrow_mut().push(call.name.clone());
+            let output = ToolOutput::new(format!("stub-result-for-{}", call.name));
+            Box::pin(async move { Ok(output) })
         }
     }
 
@@ -425,24 +451,16 @@ mod tests {
     async fn turn_engine_handles_plain_assistant_reply() {
         let mut engine = test_engine();
         let mut model = StubModel::new(vec!["plain answer"]);
-        let tool_calls = RefCell::new(Vec::<String>::new());
+        let tool_runner = StubToolRunner::default();
 
         let answer = engine
-            .run_turn_with(
-                1,
-                "hello",
-                |messages| model.chat(messages),
-                |call| {
-                    tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
-                },
-            )
+            .run_turn_with(1, "hello", |messages| model.chat(messages), &tool_runner)
             .await
             .expect("turn should succeed");
 
         assert_eq!(answer, "plain answer");
         assert_eq!(model.call_count, 1);
-        assert!(tool_calls.borrow().is_empty());
+        assert!(tool_runner.calls().is_empty());
         assert_eq!(
             engine
                 .history()
@@ -460,24 +478,21 @@ mod tests {
             r#"{"tool_call":{"name":"time.now"}}"#,
             "Here is the final answer.",
         ]);
-        let tool_calls = RefCell::new(Vec::<String>::new());
+        let tool_runner = StubToolRunner::default();
 
         let answer = engine
             .run_turn_with(
                 2,
                 "what time?",
                 |messages| model.chat(messages),
-                |call| {
-                    tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
-                },
+                &tool_runner,
             )
             .await
             .expect("turn should succeed");
 
         assert_eq!(answer, "Here is the final answer.");
         assert_eq!(model.call_count, 2);
-        assert_eq!(tool_calls.borrow().as_slice(), &["time.now".to_string()]);
+        assert_eq!(tool_runner.calls().as_slice(), &["time.now".to_string()]);
         assert!(
             engine
                 .history()
@@ -492,24 +507,21 @@ mod tests {
         let mut engine = test_engine();
         let mixed_output = "Let me check.\n{\"tool_call\":{\"name\":\"time.now\"}}";
         let mut model = StubModel::new(vec![mixed_output]);
-        let tool_calls = RefCell::new(Vec::<String>::new());
+        let tool_runner = StubToolRunner::default();
 
         let answer = engine
             .run_turn_with(
                 3,
                 "what time now?",
                 |messages| model.chat(messages),
-                |call| {
-                    tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
-                },
+                &tool_runner,
             )
             .await
             .expect("turn should succeed");
 
         assert_eq!(answer, mixed_output);
         assert_eq!(model.call_count, 1);
-        assert!(tool_calls.borrow().is_empty());
+        assert!(tool_runner.calls().is_empty());
     }
 
     #[tokio::test]
@@ -520,17 +532,14 @@ mod tests {
             r#"{"tool_call":{"name":"time.now"}}"#,
             r#"{"tool_call":{"name":"time.now"}}"#,
         ]);
-        let tool_calls = RefCell::new(Vec::<String>::new());
+        let tool_runner = StubToolRunner::default();
 
         let answer = engine
             .run_turn_with(
                 4,
                 "keep checking",
                 |messages| model.chat(messages),
-                |call| {
-                    tool_calls.borrow_mut().push(call.name.clone());
-                    Ok(ToolOutput::new(format!("stub-result-for-{}", call.name)))
-                },
+                &tool_runner,
             )
             .await
             .expect("turn should succeed");
@@ -543,7 +552,7 @@ mod tests {
             "unexpected limit message: {answer}"
         );
         assert_eq!(model.call_count, MAX_TOOL_HOPS_PER_TURN + 1);
-        assert_eq!(tool_calls.borrow().len(), MAX_TOOL_HOPS_PER_TURN);
+        assert_eq!(tool_runner.calls().len(), MAX_TOOL_HOPS_PER_TURN);
         assert_eq!(
             engine
                 .history()
